@@ -1,132 +1,87 @@
-"""
-Testes para o módulo coleta_emails.
-"""
-
 import csv
 import os
-
 import pytest
+from unittest.mock import patch, MagicMock
 
+# Importa as funções atualizadas do script principal
 from coleta_emails import (
-    extrair_emails_de_texto,
     normalizar_email,
-    organizar_emails,
+    extrair_emails_com_contexto,
+    validar_com_ia,
     salvar_csv,
-    validar_email,
-    PASTA_SAIDA,
+    PASTA_SAIDA
 )
 
-
 # ---------------------------------------------------------------------------
-# Extração
-# ---------------------------------------------------------------------------
-
-class TestExtrairEmailsDeTexto:
-    def test_extrai_email_simples(self):
-        assert extrair_emails_de_texto("contato@empresa.com") == ["contato@empresa.com"]
-
-    def test_extrai_multiplos_emails(self):
-        texto = "Fale com joao@teste.com ou maria@exemplo.com.br para mais informações."
-        resultado = extrair_emails_de_texto(texto)
-        assert "joao@teste.com" in resultado
-        assert "maria@exemplo.com.br" in resultado
-
-    def test_texto_sem_email(self):
-        assert extrair_emails_de_texto("Nenhum email aqui.") == []
-
-    def test_extrai_email_em_meio_a_html(self):
-        html = '<a href="mailto:dev@projeto.io">dev@projeto.io</a>'
-        resultado = extrair_emails_de_texto(html)
-        assert "dev@projeto.io" in resultado
-
-
-# ---------------------------------------------------------------------------
-# Validação
+# Testes de Normalização e Extração
 # ---------------------------------------------------------------------------
 
-class TestValidarEmail:
-    def test_email_valido(self):
-        assert validar_email("usuario@dominio.com") is True
+def test_normalizar_email():
+    assert normalizar_email("  DOCENTE@UBA.AR  ") == "docente@uba.ar"
+    assert normalizar_email("contato@uff.br") == "contato@uff.br"
 
-    def test_email_com_subdominio(self):
-        assert validar_email("user@mail.empresa.com.br") is True
-
-    def test_email_sem_arroba(self):
-        assert validar_email("usuariodominio.com") is False
-
-    def test_email_sem_dominio(self):
-        assert validar_email("usuario@") is False
-
-    def test_email_vazio(self):
-        assert validar_email("") is False
-
-    def test_email_com_espacos(self):
-        assert validar_email("  usuario@dominio.com  ") is True  # normaliza antes
-
+def test_extrair_emails_com_contexto():
+    texto_html = """
+    Bem-vindo ao departamento. Fale com a coordenação em coord@letras.uba.ar para 
+    matrículas. O suporte de TI é ti@uba.ar e atende das 9h às 18h.
+    """
+    resultado = extrair_emails_com_contexto(texto_html)
+    
+    # Verifica se extraiu os e-mails corretamente sem duplicatas
+    assert "coord@letras.uba.ar" in resultado
+    assert "ti@uba.ar" in resultado
+    
+    # Verifica se capturou o contexto (palavras ao redor)
+    assert "coordenação em coord@letras.uba.ar para" in resultado["coord@letras.uba.ar"]
 
 # ---------------------------------------------------------------------------
-# Normalização
+# Testes com Mock da IA (Custo Zero)
 # ---------------------------------------------------------------------------
 
-class TestNormalizarEmail:
-    def test_converte_para_minusculas(self):
-        assert normalizar_email("USUARIO@DOMINIO.COM") == "usuario@dominio.com"
+@patch('coleta_emails.time.sleep') # Impede o sleep de atrasar o teste
+def test_validar_com_ia_aprovado(mock_sleep):
+    # Simula o modelo LLM
+    mock_modelo = MagicMock()
+    mock_resposta = MagicMock()
+    mock_resposta.text = "S" # IA responde SIM
+    mock_modelo.generate_content.return_value = mock_resposta
+    
+    resultado = validar_com_ia(mock_modelo, "docente@artes.edu", "Professor titular de cinema")
+    
+    assert resultado is True
+    mock_modelo.generate_content.assert_called_once()
+    mock_sleep.assert_called_once_with(1)
 
-    def test_remove_espacos(self):
-        assert normalizar_email("  email@teste.com  ") == "email@teste.com"
-
-
-# ---------------------------------------------------------------------------
-# Organização
-# ---------------------------------------------------------------------------
-
-class TestOrganizarEmails:
-    def test_remove_duplicatas(self):
-        emails = ["a@b.com", "a@b.com", "c@d.com"]
-        assert organizar_emails(emails) == ["a@b.com", "c@d.com"]
-
-    def test_normaliza_e_deduplica(self):
-        emails = ["A@B.COM", "a@b.com"]
-        assert organizar_emails(emails) == ["a@b.com"]
-
-    def test_ordena_alfabeticamente(self):
-        emails = ["z@z.com", "a@a.com", "m@m.com"]
-        assert organizar_emails(emails) == ["a@a.com", "m@m.com", "z@z.com"]
-
-    def test_filtra_invalidos(self):
-        emails = ["valido@ok.com", "invalido", "@semlocal.com"]
-        assert organizar_emails(emails) == ["valido@ok.com"]
-
-    def test_lista_vazia(self):
-        assert organizar_emails([]) == []
-
+@patch('coleta_emails.time.sleep')
+def test_validar_com_ia_reprovado(mock_sleep):
+    # Simula o modelo LLM
+    mock_modelo = MagicMock()
+    mock_resposta = MagicMock()
+    mock_resposta.text = "N" # IA responde NÃO
+    mock_modelo.generate_content.return_value = mock_resposta
+    
+    resultado = validar_com_ia(mock_modelo, "ti@universidade.edu", "Suporte técnico de computadores")
+    
+    assert resultado is False
+    mock_modelo.generate_content.assert_called_once()
 
 # ---------------------------------------------------------------------------
-# Exportação CSV
+# Testes de Exportação
 # ---------------------------------------------------------------------------
 
-class TestSalvarCsv:
-    def test_cria_arquivo_csv(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        emails = ["a@a.com", "b@b.com"]
-        salvar_csv(emails, "teste.csv")
-
-        caminho = tmp_path / PASTA_SAIDA / "teste.csv"
-        assert caminho.exists()
-
-        with open(caminho, newline="", encoding="utf-8") as f:
-            linhas = list(csv.reader(f))
-
-        assert linhas[0] == ["email"]
-        assert ["a@a.com"] in linhas
-        assert ["b@b.com"] in linhas
-
-    def test_csv_vazio_apenas_cabecalho(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        salvar_csv([], "vazio.csv")
-
-        caminho = tmp_path / PASTA_SAIDA / "vazio.csv"
-        with open(caminho, newline="", encoding="utf-8") as f:
-            linhas = list(csv.reader(f))
-
-        assert linhas == [["email"]]
+def test_salvar_csv(tmp_path, monkeypatch):
+    # Redireciona o diretório de trabalho para uma pasta temporária do pytest
+    monkeypatch.chdir(tmp_path)
+    emails_validados = ["prof1@uba.ar", "secretaria@ufj.br"]
+    
+    salvar_csv(emails_validados, "teste_saida.csv")
+    caminho_arquivo = tmp_path / PASTA_SAIDA / "teste_saida.csv"
+    
+    assert caminho_arquivo.exists()
+    
+    with open(caminho_arquivo, newline="", encoding="utf-8") as f:
+        linhas = list(csv.reader(f))
+        
+    assert linhas[0] == ["email_validado"]
+    assert ["prof1@uba.ar"] in linhas
+    assert ["secretaria@ufj.br"] in linhas
