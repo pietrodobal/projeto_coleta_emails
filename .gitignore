@@ -18,6 +18,8 @@ lib64/
 
 # Virtual environments
 .env
+.credenciais
+credenciais
 .venv
 env/
 venv/
