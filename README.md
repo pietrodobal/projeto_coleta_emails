@@ -1,122 +1,88 @@
-# 📧 Projeto Coleta e Organização de Emails
+# 📧 Extrator e Curador de E-mails com Validação de IA (Gemini API)
 
-Script Python para **coletar**, **validar** e **organizar** endereços de email a partir de arquivos de texto, arquivos CSV e páginas web.
+Script Python avançado para **coleta**, **filtragem semântica** e **organização** de endereços de e-mail a partir de páginas web. 
+
+Estruturado para mineração de contatos altamente qualificados (como prospecção em diretórios acadêmicos da América Latina), o projeto utiliza expressões regulares (Regex) aliadas à Inteligência Artificial para eliminar "ruído" (e-mails genéricos, suporte, alunos) e reter apenas perfis decisores com base no contexto em que o e-mail aparece na página.
 
 ---
 
 ## 📋 Funcionalidades
 
-- Extração de emails de arquivos **TXT** e **CSV**
-- Extração de emails de **páginas web** via web scraping
-- **Validação** de formato de email com expressão regular
-- **Normalização** (conversão para minúsculas, remoção de espaços)
-- **Remoção de duplicatas**
-- **Ordenação** alfabética
-- Exportação do resultado em **CSV**
+- **Web Scraping de Precisão:** Extração de e-mails e captura automática do contexto adjacente no DOM (80 caracteres) para análise.
+- **Validação Semântica via LLM:** Integração com a API do Google Gemini (2.5 Flash) para classificar e aprovar contatos com base no texto ao redor do e-mail.
+- **Controle de Custos e API Limits:** Função de deduplicação na memória antes da chamada da API e delay estrutural (`time.sleep`) para viabilizar a execução integral no plano gratuito (Free Tier).
+- **Modo Dry-run:** Capacidade de rodar a extração bruta para auditar as expressões regulares sem acionar a IA, poupando tokens.
+- **Exportação Limpa:** Geração de arquivo CSV padronizado e livre de duplicatas.
 
 ---
 
-## 🚀 Como usar
+## 🚀 Como usar no ambiente Linux (Ubuntu)
 
-### 1. Clone o repositório
+### 1. Preparação do Ambiente
 
 ```bash
-git clone https://github.com/pietrodobal/projeto_coleta_emails.git
+# Clone o repositório
+git clone https://github.com/seu-usuario/projeto_coleta_emails.git
 cd projeto_coleta_emails
-```
 
-### 2. Instale as dependências
+# Crie e ative um ambiente virtual isolado
+python3 -m venv venv
+source venv/bin/activate
 
-```bash
+# Instale as dependências
 pip install -r requirements.txt
 ```
 
-### 3. Execute o script
+### 2. Configuração da API (Gratuita)
 
-**A partir de um arquivo:**
+Para utilizar o filtro inteligente, obtenha uma chave no [Google AI Studio](https://aistudio.google.com/) e exporte-a como variável de ambiente no seu terminal. Isso evita expor credenciais no código-fonte.
+
 ```bash
-python coleta_emails.py --arquivo entrada.txt --saida emails.csv
+export GEMINI_API_KEY="sua_chave_aqui"
 ```
 
-**A partir de uma URL:**
+### 3. Execução
+
+**Extração com Validação de IA (Recomendado):**
+O script fará o scraping, extrairá o contexto de cada e-mail e fará a requisição para o LLM classificar a validade do contato.
 ```bash
-python coleta_emails.py --url https://exemplo.com --saida emails.csv
+python coleta_emails.py --url "https://www.exemplo.edu.br/diretorio" --ia
 ```
 
-**Combinando arquivo e URL:**
+**Extração Bruta (Modo de Teste):**
+Extrai e consolida todos os e-mails e contextos encontrados na página e exibe no terminal, sem realizar requisições externas para o Gemini.
 ```bash
-python coleta_emails.py --arquivo entrada.txt --url https://exemplo.com --saida resultado.csv
+python coleta_emails.py --url "https://www.exemplo.edu.br/diretorio"
 ```
 
-O arquivo de saída será salvo na pasta `saida/`.
+Os contatos validados serão gerados no diretório de saída: `saida/emails_validados.csv`.
 
 ---
 
-## 🗂️ Estrutura do projeto
+## 🗂️ Estrutura do Projeto
 
-```
+```text
 projeto_coleta_emails/
-├── coleta_emails.py         # Script principal
-├── tests_coleta_emails.py   # Testes automatizados (pytest)
-├── requirements.txt         # Dependências do projeto
-├── .gitignore               # Arquivos ignorados pelo Git
-└── README.md                # Este arquivo
+├── coleta_emails.py         # Script de scraping e integração com Gemini
+├── tests_coleta_emails.py   # Suíte de testes com simulação (Mocks) de IA
+├── requirements.txt         # Dependências (requests, bs4, google-generativeai)
+├── .gitignore               # Oculta venv, chaves exportadas e artefatos de saída
+└── README.md                # Documentação
 ```
 
 ---
 
-## 🧪 Testes
-
-Os testes cobrem extração, validação, normalização, organização e exportação de emails.
-
-```bash
-pip install pytest
-python -m pytest tests_coleta_emails.py -v
-```
-
----
-
-## 📦 Dependências
-
-| Pacote          | Uso                                      |
-|-----------------|------------------------------------------|
-| `requests`      | Requisições HTTP para coleta via URL     |
-| `beautifulsoup4`| Parser HTML para extração de texto       |
-| `lxml`          | Backend eficiente para o BeautifulSoup   |
-
-> **Nota:** As dependências `requests`, `beautifulsoup4` e `lxml` são necessárias apenas para coleta via URL. A coleta a partir de arquivos locais não requer instalação adicional.
-
----
-
-## 💡 Exemplo de saída
-
-```
-[INFO] 5 email(s) encontrado(s) em 'entrada.txt'
-
-==================================================
-  Total de emails únicos e válidos: 4
-==================================================
-  • admin@portal.org
-  • marketing@empresa.com.br
-  • suporte@empresa.com
-  • vendas@empresa.com
-==================================================
-
-[INFO] 4 email(s) salvo(s) em 'saida/emails.csv'
-```
-
----
-
-## 🛠️ Tecnologias
+## 🛠️ Tecnologias e Bibliotecas
 
 - **Python 3.10+**
-- `re` — expressões regulares (stdlib)
-- `csv` — leitura e escrita de CSV (stdlib)
-- `argparse` — interface de linha de comando (stdlib)
-- `requests` + `BeautifulSoup4` — web scraping
+- `google-generativeai` — Integração com LLM para Processamento de Linguagem Natural e classificação binária.
+- `BeautifulSoup4` & `requests` — Extração de DOM HTML e requisições HTTP seguras.
+- `re` & `csv` — Expressões regulares nativas e manipulação de planilhas.
+- `pytest` & `unittest.mock` — Cobertura de testes unitários isolados, sem consumo de rede ou cota de API.
 
 ---
 
 ## 👨‍💻 Autor
 
-Desenvolvido por **Pietro Dobal** como projeto freelancer de coleta e organização de emails.
+Desenvolvido por **Pietro Baldo** — Estudante de Engenharia de Computação e QA.
+Construído com foco em eficiência, testes de qualidade e integração de IA a custo zero para automação de processos de Data Mining.
