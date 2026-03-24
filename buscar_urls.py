@@ -75,6 +75,10 @@ PARAMETROS_RASTREAMENTO = {
 }
 
 
+def cse_configurado() -> bool:
+    return bool(os.getenv("GOOGLE_CSE_API_KEY") and os.getenv("GOOGLE_CSE_CX"))
+
+
 def normalizar_url(url: str) -> str:
     parsed = urlparse(url.strip())
     if not parsed.scheme or not parsed.netloc:
@@ -100,6 +104,17 @@ def normalizar_url(url: str) -> str:
 def extrair_site(url: str) -> str:
     netloc = urlparse(url).netloc.lower()
     return netloc[4:] if netloc.startswith("www.") else netloc
+
+
+def eh_url_brasil(url: str) -> bool:
+    site = extrair_site(url)
+    return site.endswith(".br") if site else False
+
+
+def selecionar_dorks(apenas_br: bool) -> list[str]:
+    if not apenas_br:
+        return dorks
+    return [dork for dork in dorks if "site:edu.br" in dork]
 
 
 def carregar_urls_existentes(caminho_saida: str) -> list[str]:
@@ -190,8 +205,25 @@ def eh_erro_limite(mensagem_erro: str) -> bool:
     return any(gatilho in mensagem for gatilho in gatilhos)
 
 
+def salvar_urls_em_arquivo(caminho_saida: str, urls_unicas: set[str], limite_total: int) -> int:
+    urls_limitadas = list(urls_unicas)[:limite_total]
+    with open(caminho_saida, "w", encoding="utf-8") as f:
+        f.write("urls = [\n")
+        for url in urls_limitadas:
+            f.write(f'    "{url}",\n')
+        f.write("]\n")
+    return len(urls_limitadas)
+
+
 def buscar_com_retry(dork: str, engine: str, num_resultados: int, max_tentativas: int, backoff_base: float) -> list[str]:
-    provedores = [engine] if engine != "auto" else ["cse", "duckduckgo", "google"]
+    if engine == "auto":
+        provedores = ["duckduckgo", "google"]
+        if cse_configurado():
+            provedores.insert(0, "cse")
+        else:
+            print("[cse] Não configurado. Pulando CSE (adicione GOOGLE_CSE_API_KEY e GOOGLE_CSE_CX para ativar).")
+    else:
+        provedores = [engine]
 
     for provedor in provedores:
         for tentativa in range(1, max_tentativas + 1):
@@ -240,8 +272,14 @@ def main() -> int:
     parser.add_argument("--max-urls-por-site", type=int, default=1)
     parser.add_argument("--rodadas", type=int, default=1)
     parser.add_argument("--acumular", action="store_true")
+    parser.add_argument("--apenas-br", action="store_true")
     parser.add_argument("--saida", default="lista_urls.py")
     args = parser.parse_args()
+
+    dorks_ativas = selecionar_dorks(args.apenas_br)
+    if not dorks_ativas:
+        print("Nenhuma dork disponível para o filtro selecionado.")
+        return 1
 
     urls_unicas = set()
     contagem_por_site = {}
@@ -256,53 +294,57 @@ def main() -> int:
             if site:
                 contagem_por_site[site] = contagem_por_site.get(site, 0) + 1
 
-    for rodada in range(1, args.rodadas + 1):
-        if len(urls_unicas) >= args.limite_total:
-            break
-
-        print(f"=== Rodada {rodada}/{args.rodadas} ===")
-        for indice, dork in enumerate(dorks, start=1):
-            print(f"[{indice}/{len(dorks)}] Buscando: {dork}")
-            resultados = buscar_com_retry(
-                dork=dork,
-                engine=args.engine,
-                num_resultados=args.num_resultados,
-                max_tentativas=args.max_tentativas,
-                backoff_base=args.backoff_base,
-            )
-
-            for url in resultados:
-                url_normalizada = normalizar_url(url)
-                if not url_normalizada:
-                    continue
-
-                if url_normalizada in urls_unicas:
-                    continue
-
-                site = extrair_site(url_normalizada)
-                quantidade_no_site = contagem_por_site.get(site, 0)
-                if site and quantidade_no_site >= args.max_urls_por_site:
-                    continue
-
-                urls_unicas.add(url_normalizada)
-                if site:
-                    contagem_por_site[site] = quantidade_no_site + 1
-
-            pausa = random.uniform(args.pausa_min, args.pausa_max)
-            time.sleep(pausa)
-
+    try:
+        for rodada in range(1, args.rodadas + 1):
             if len(urls_unicas) >= args.limite_total:
                 break
 
-    urls_limitadas = list(urls_unicas)[: args.limite_total]
+            print(f"=== Rodada {rodada}/{args.rodadas} ===")
+            for indice, dork in enumerate(dorks_ativas, start=1):
+                print(f"[{indice}/{len(dorks_ativas)}] Buscando: {dork}")
+                resultados = buscar_com_retry(
+                    dork=dork,
+                    engine=args.engine,
+                    num_resultados=args.num_resultados,
+                    max_tentativas=args.max_tentativas,
+                    backoff_base=args.backoff_base,
+                )
 
-    with open(args.saida, "w", encoding="utf-8") as f:
-        f.write("urls = [\n")
-        for url in urls_limitadas:
-            f.write(f'    "{url}",\n')
-        f.write("]\n")
+                for url in resultados:
+                    url_normalizada = normalizar_url(url)
+                    if not url_normalizada:
+                        continue
 
-    print(f"Processo finalizado. {len(urls_limitadas)} URLs validadas e salvas em '{args.saida}'.")
+                    if args.apenas_br and not eh_url_brasil(url_normalizada):
+                        continue
+
+                    if url_normalizada in urls_unicas:
+                        continue
+
+                    site = extrair_site(url_normalizada)
+                    quantidade_no_site = contagem_por_site.get(site, 0)
+                    if site and quantidade_no_site >= args.max_urls_por_site:
+                        continue
+
+                    urls_unicas.add(url_normalizada)
+                    if site:
+                        contagem_por_site[site] = quantidade_no_site + 1
+
+                total_atual = salvar_urls_em_arquivo(args.saida, urls_unicas, args.limite_total)
+                print(f"Progresso salvo: {total_atual} URLs em '{args.saida}'.")
+
+                pausa = random.uniform(args.pausa_min, args.pausa_max)
+                time.sleep(pausa)
+
+                if len(urls_unicas) >= args.limite_total:
+                    break
+    except KeyboardInterrupt:
+        total_atual = salvar_urls_em_arquivo(args.saida, urls_unicas, args.limite_total)
+        print(f"\nInterrompido pelo usuário. Progresso salvo com {total_atual} URLs em '{args.saida}'.")
+        return 130
+
+    total_final = salvar_urls_em_arquivo(args.saida, urls_unicas, args.limite_total)
+    print(f"Processo finalizado. {total_final} URLs validadas e salvas em '{args.saida}'.")
     return 0
 
 

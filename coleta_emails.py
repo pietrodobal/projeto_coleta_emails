@@ -9,6 +9,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from dotenv import load_dotenv
 
 ARQUIVO_CREDENCIAIS_OCULTO = Path(__file__).with_name(".credenciais")
@@ -45,6 +46,35 @@ EMAIL_REGEX = re.compile(
     re.IGNORECASE,
 )
 PASTA_SAIDA = "saida"
+ARQUIVO_URLS_PROCESSADAS = Path(PASTA_SAIDA) / "urls_processadas.txt"
+
+
+def normalizar_url_para_controle(url: str) -> str:
+    try:
+        partes = urlsplit(url.strip())
+        caminho = partes.path.rstrip("/")
+        return urlunsplit((partes.scheme.lower(), partes.netloc.lower(), caminho, partes.query, ""))
+    except Exception:
+        return url.strip().lower().rstrip("/")
+
+
+def carregar_urls_processadas() -> set[str]:
+    if not ARQUIVO_URLS_PROCESSADAS.exists():
+        return set()
+
+    with ARQUIVO_URLS_PROCESSADAS.open("r", encoding="utf-8") as arquivo:
+        return {
+            normalizar_url_para_controle(linha)
+            for linha in arquivo
+            if linha.strip()
+        }
+
+
+def registrar_url_processada(url: str) -> None:
+    os.makedirs(PASTA_SAIDA, exist_ok=True)
+    url_normalizada = normalizar_url_para_controle(url)
+    with ARQUIVO_URLS_PROCESSADAS.open("a", encoding="utf-8") as arquivo:
+        arquivo.write(url_normalizada + "\n")
 
 def normalizar_email(email: str) -> str:
     return email.strip().lower()
@@ -60,23 +90,23 @@ def extrair_emails_com_contexto(texto: str) -> dict:
             resultados[email] = contexto
     return resultados
 
-def coletar_de_url(url: str) -> dict:
+def coletar_de_url(url: str) -> tuple[dict, bool]:
     try:
         import requests
         from bs4 import BeautifulSoup
     except ImportError:
-        return {}
+        return {}, False
 
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64)'}
         resposta = requests.get(url, headers=headers, timeout=15)
         resposta.raise_for_status()
     except requests.RequestException:
-        return {}
+        return {}, False
 
     soup = BeautifulSoup(resposta.text, "lxml")
     texto = soup.get_text(separator=" ")
-    return extrair_emails_com_contexto(texto)
+    return extrair_emails_com_contexto(texto), True
 
 def configurar_ia():
     chave = os.getenv("GEMINI_API_KEY")
@@ -137,11 +167,26 @@ def main() -> int:
     else:
         parser.error("Informe --url ou --lote")
 
+    urls_processadas = carregar_urls_processadas()
+
+    if args.lote:
+        urls_alvo = [
+            url for url in urls_alvo
+            if normalizar_url_para_controle(url) not in urls_processadas
+        ]
+
     emails_aprovados = []
     modelo_ia = configurar_ia() if args.ia else None
 
     for url in urls_alvo:
-        emails_brutos = coletar_de_url(url)
+        emails_brutos, sucesso_coleta = coletar_de_url(url)
+
+        if sucesso_coleta:
+            url_normalizada = normalizar_url_para_controle(url)
+            if url_normalizada not in urls_processadas:
+                registrar_url_processada(url)
+                urls_processadas.add(url_normalizada)
+
         if not emails_brutos:
             continue
         
