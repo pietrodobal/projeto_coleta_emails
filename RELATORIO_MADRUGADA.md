@@ -1,6 +1,6 @@
 # Relatório da Madrugada
 
-- Janela analisada: 2026-03-25 06:56:32 até 2026-03-25 07:50:05
+- Janela analisada: 2026-03-25 06:56:32 até 2026-03-25 08:01:32
 - URLs totais em lista_urls.py: 455
 
 ## Resultado acumulado
