@@ -98,6 +98,7 @@ urls = [
     "https://filosofia.uanl.mx/docentes",
     "https://filosofia.uerj.br/",
     "https://filosofia.ufabc.edu.br/pos-graduacao",
+    "https://filosofia.ufes.br/",
     "https://formaciondocente.edu.ar/",
     "https://ftp.edu.br/curso/ensino-de-filosofia-e-sociologia",
     "https://huma.unca.edu.ar/secretarias/academica",
