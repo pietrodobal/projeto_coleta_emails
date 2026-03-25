@@ -49,6 +49,25 @@ O script fará o scraping, extrairá o contexto de cada e-mail e fará a requisi
 python coleta_emails.py --url "https://www.exemplo.edu.br/diretorio" --ia
 ```
 
+**Execução paralela em 2+ computadores (sharding):**
+Quando duas máquinas rodam em paralelo, use shards para evitar que ambas processem as mesmas URLs da `lista_urls.py`.
+
+```bash
+# Máquina A (shard 0 de 2)
+python coleta_emails.py --lote --ia --shard-count 2 --shard-index 0 --saida emails_validados_a.csv --saida-rejeitados rejeitados_ia_a.csv
+
+# Máquina B (shard 1 de 2)
+python coleta_emails.py --lote --ia --shard-count 2 --shard-index 1 --saida emails_validados_b.csv --saida-rejeitados rejeitados_ia_b.csv
+```
+
+Se quiser isolar completamente as saídas por máquina, defina `SAIDA_DIR` (ex.: `saida_faculdade`):
+
+```bash
+SAIDA_DIR=saida_faculdade python coleta_emails.py --lote --ia --shard-count 2 --shard-index 1
+```
+
+Depois, unifique os CSVs em uma máquina de consolidação (ou mantenha o fluxo de consolidação já existente no projeto).
+
 **Extração Bruta (Modo de Teste):**
 Extrai e consolida todos os e-mails e contextos encontrados na página e exibe no terminal, sem realizar requisições externas para o Gemini.
 ```bash
@@ -64,7 +83,7 @@ Os contatos validados serão gerados no diretório de saída: `saida/emails_vali
 Para manter o pipeline rodando enquanto você dorme, use o supervisor:
 
 ```bash
-cd "/home/pietro/projetos pessoais/coleta_e_organizacao_de_emails/projeto_coleta_emails"
+cd "/workspaces/projeto_coleta_emails"
 
 # iniciar monitoramento (reinicia ciclo_horario.sh se cair)
 bash supervisor_noturno.sh start
@@ -83,6 +102,81 @@ Opcional: ajustar frequência de checagem (padrão 30s):
 
 ```bash
 CHECK_INTERVAL_SECONDS=30 bash supervisor_noturno.sh start
+```
+
+Opcional: executar em paralelo em 2 máquinas no fluxo noturno (sharding):
+
+```bash
+# Máquina A
+SHARD_COUNT=2 SHARD_INDEX=0 bash supervisor_noturno.sh start
+
+# Máquina B
+SHARD_COUNT=2 SHARD_INDEX=1 bash supervisor_noturno.sh start
+```
+
+Com pasta separada para esta máquina:
+
+```bash
+SAIDA_DIR=saida_faculdade SHARD_COUNT=2 SHARD_INDEX=1 bash supervisor_noturno.sh start
+```
+
+Para rodar sem IA e manter um arquivo único com todos os e-mails encontrados:
+
+```bash
+SAIDA_DIR=saida_faculdade USAR_IA=0 SHARD_COUNT=2 SHARD_INDEX=1 bash supervisor_noturno.sh start
+```
+
+Padrão remoto recomendado (fora do computador de casa):
+
+```bash
+# iniciar com defaults remotos (sem IA, saida_faculdade, arquivo total)
+bash supervisor_remoto.sh start
+
+# status
+bash supervisor_remoto.sh status
+
+# parar
+bash supervisor_remoto.sh stop
+```
+
+Defaults do modo remoto (`supervisor_remoto.sh` / `ciclo_remoto.sh`):
+
+- `SAIDA_DIR=saida_faculdade`
+- `USAR_IA=0`
+- `LISTA_URLS_REL=saida_faculdade/lista_urls_faculdade.py`
+- `EMAILS_TOTAL_REL=a_validar_faculdade.csv`
+- `SHARD_COUNT=1` e `SHARD_INDEX=0` (pode sobrescrever)
+
+Arquivo consolidado gerado automaticamente por ciclo:
+
+- `saida_faculdade/a_validar_faculdade.csv` (somente emails ainda não validados)
+- `saida_faculdade/ja_filtrados_faculdade.csv` (sincronizado a partir de `validados_faculdade.csv`)
+
+Nesse modo, a pasta `saida_faculdade` passa a concentrar os resultados desta máquina, incluindo:
+
+- `saida_faculdade/lista_urls_faculdade.py` (URLs encontradas da etapa de busca)
+- `saida_faculdade/emails_validados.csv` e `saida_faculdade/Rejeitados.csv`
+- `saida_faculdade/ciclos/*.csv` (arquivos por ciclo)
+
+Para parar automaticamente em um horário e fazer commit/push em branch separada (sem usar `main`):
+
+```bash
+# agenda parada às 11:10 e publica resultados em branch própria
+SAIDA_DIR=saida_faculdade bash agendar_parada_commit_branch.sh 11:10 results/saida_faculdade_hoje
+```
+
+Para respeitar horário local (ex.: Brasil), informe o fuso:
+
+```bash
+TARGET_TZ=America/Sao_Paulo SAIDA_DIR=saida_faculdade bash agendar_parada_commit_branch.sh 11:10 results/saida_faculdade_hoje
+```
+
+O script para o supervisor/ciclo local, gera `RELATORIO_MADRUGADA.md` com `--saida-dir`, comita apenas `SAIDA_DIR` + relatório e faz push para a branch informada.
+
+Checagem rápida após merge (conflitos + comparação de resultados):
+
+```bash
+bash check_merge_rapido.sh
 ```
 
 Logs do supervisor ficam em: `supervisor_noturno.log`.

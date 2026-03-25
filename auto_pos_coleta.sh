@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/home/pietro/projetos pessoais/coleta_e_organizacao_de_emails/projeto_coleta_emails"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
+
+if [ -n "${PYTHON_BIN:-}" ]; then
+    PY="$PYTHON_BIN"
+elif [ -x "$ROOT/venv/bin/python" ]; then
+    PY="$ROOT/venv/bin/python"
+else
+    PY="$(command -v python3)"
+fi
 
 LOG="auto_pos_coleta.log"
 echo "[$(date '+%F %T')] monitor iniciado" >> "$LOG"
@@ -11,6 +19,7 @@ VALIDADOS_NOVO_REL="${VALIDADOS_NOVO_REL:-emails_validados_novos.csv}"
 BRUTOS_NOVO_REL="${BRUTOS_NOVO_REL:-emails_brutos_novos.csv}"
 REJEITADOS_IA_REL="${REJEITADOS_IA_REL:-}"
 PRESERVAR_NOVOS="${PRESERVAR_NOVOS:-0}"
+SAIDA_DIR="${SAIDA_DIR:-saida}"
 
 while pgrep -af "python .*coleta_emails.py --lote --ia" >/dev/null 2>&1; do
   sleep 30
@@ -18,12 +27,12 @@ done
 
 echo "[$(date '+%F %T')] job IA finalizado, iniciando merge" >> "$LOG"
 
-"/home/pietro/.virtualenvs/.venv/bin/python" - << 'PY'
+"$PY" - << 'PY'
 import csv
 import os
 from pathlib import Path
 
-base = Path("saida")
+base = Path(os.getenv("SAIDA_DIR", "saida"))
 
 validados_antigo = base / "emails_validados.csv"
 validados_novo = base / os.getenv("VALIDADOS_NOVO_REL", "emails_validados_novos.csv")

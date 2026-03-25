@@ -2,6 +2,7 @@
 import argparse
 import ast
 import csv
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +13,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gera relatório da madrugada para coleta de e-mails.")
     parser.add_argument("--start-epoch", type=int, required=True, help="Epoch de início da janela.")
     parser.add_argument("--output", default="RELATORIO_MADRUGADA.md", help="Arquivo de saída do relatório.")
+    parser.add_argument(
+        "--saida-dir",
+        default=os.getenv("SAIDA_DIR", "saida"),
+        help="Diretório de saída onde estão os CSVs e ciclos.",
+    )
     return parser.parse_args()
 
 
@@ -115,7 +121,7 @@ def main() -> int:
     start_epoch = args.start_epoch
     end_epoch = int(datetime.now().timestamp())
 
-    saida = ROOT / "saida"
+    saida = ROOT / args.saida_dir
     ciclos = saida / "ciclos"
 
     validados = count_csv_rows(saida / "emails_validados.csv")
