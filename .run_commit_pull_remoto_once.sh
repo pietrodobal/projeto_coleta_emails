@@ -7,10 +7,7 @@ REMOTE="origin"
 cd "$ROOT"
 
 echo "[$(date '+%F %T')] execução agendada iniciada (branch=$BRANCH)" >> "$LOG"
-
-bash "$ROOT/supervisor_noturno.sh" stop >> "$LOG" 2>&1 || true
-pkill -f "ciclo_horario.sh" >> "$LOG" 2>&1 || true
-sleep 2
+echo "[$(date '+%F %T')] coleta mantida em execução (sem stop/pkill)" >> "$LOG"
 
 git fetch "$REMOTE" >> "$LOG" 2>&1 || true
 git switch "$BRANCH" >> "$LOG" 2>&1
