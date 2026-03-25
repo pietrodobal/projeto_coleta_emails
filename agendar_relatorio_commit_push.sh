@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/home/pietro/projetos pessoais/coleta_e_organizacao_de_emails/projeto_coleta_emails"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG="$ROOT/commit_push_agendado.log"
-PY="/home/pietro/.virtualenvs/.venv/bin/python"
+if [ -n "${PYTHON_BIN:-}" ]; then
+  PY="$PYTHON_BIN"
+elif [ -x "$ROOT/venv/bin/python" ]; then
+  PY="$ROOT/venv/bin/python"
+else
+  PY="$(command -v python3)"
+fi
 DELAY_SECONDS="${1:-28800}"
+SAIDA_DIR="${SAIDA_DIR:-saida}"
 
 cd "$ROOT"
 
@@ -21,7 +28,7 @@ cd "$ROOT"
 
 echo "[\$(date '+%F %T')] execução agendada iniciada" >> "$LOG"
 
-"$PY" "$ROOT/gerar_relatorio_madrugada.py" --start-epoch "$START_EPOCH" --output "RELATORIO_MADRUGADA.md" >> "$LOG" 2>&1
+"$PY" "$ROOT/gerar_relatorio_madrugada.py" --start-epoch "$START_EPOCH" --output "RELATORIO_MADRUGADA.md" --saida-dir "$SAIDA_DIR" >> "$LOG" 2>&1
 
 git add -A >> "$LOG" 2>&1
 if git diff --cached --quiet; then

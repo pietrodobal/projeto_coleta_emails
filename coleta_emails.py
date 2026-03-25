@@ -27,7 +27,14 @@ except ImportError:
     genai = None
 
 def carregar_urls_importadas() -> list[str]:
-    caminho_lista = Path(__file__).with_name("lista_urls.py")
+    caminho_env = os.getenv("LISTA_URLS_ARQUIVO", "").strip()
+    if caminho_env:
+        caminho_lista = Path(caminho_env)
+        if not caminho_lista.is_absolute():
+            caminho_lista = Path(__file__).resolve().parent / caminho_lista
+    else:
+        caminho_lista = Path(__file__).with_name("lista_urls.py")
+
     if not caminho_lista.exists():
         return []
 
@@ -41,13 +48,11 @@ def carregar_urls_importadas() -> list[str]:
     urls = getattr(modulo, "urls", [])
     return urls if isinstance(urls, list) else []
 
-urls_importadas = carregar_urls_importadas()
-
 EMAIL_REGEX = re.compile(
     r"([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})",
     re.IGNORECASE,
 )
-PASTA_SAIDA = "saida"
+PASTA_SAIDA = os.getenv("SAIDA_DIR", "saida")
 ARQUIVO_URLS_PROCESSADAS_SEM_IA = Path(PASTA_SAIDA) / "urls_processadas.txt"
 ARQUIVO_URLS_PROCESSADAS_COM_IA = Path(PASTA_SAIDA) / "urls_processadas_ia.txt"
 MAX_FALHAS_CONSECUTIVAS_IA = int(os.getenv("IA_MAX_FALHAS_CONSECUTIVAS", "5"))
@@ -418,17 +423,46 @@ def main() -> int:
     parser.add_argument("--saida", "-s", default="emails_validados.csv", help="Arquivo CSV de saída.")
     parser.add_argument("--ia", action="store_true", help="Ativa o filtro de IA.")
     parser.add_argument(
+        "--shard-count",
+        type=int,
+        default=1,
+        help="Total de shards para dividir a lista de URLs em execução paralela.",
+    )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=0,
+        help="Índice do shard atual (0 até shard-count-1).",
+    )
+    parser.add_argument(
         "--saida-rejeitados",
         default="Rejeitados.csv",
         help="Arquivo de rejeitados da etapa IA (acumulado sem duplicatas).",
     )
     args = parser.parse_args()
 
+    if args.shard_count < 1:
+        parser.error("--shard-count deve ser >= 1")
+
+    if args.shard_index < 0 or args.shard_index >= args.shard_count:
+        parser.error("--shard-index deve estar entre 0 e shard-count-1")
+
     urls_alvo = []
     if args.url:
         urls_alvo.append(args.url)
     elif args.lote:
+        urls_importadas = carregar_urls_importadas()
         urls_alvo.extend(urls_importadas)
+
+        if args.shard_count > 1:
+            urls_alvo = [
+                url for indice, url in enumerate(urls_alvo)
+                if indice % args.shard_count == args.shard_index
+            ]
+            print(
+                f"[SHARD] shard-index={args.shard_index}/{args.shard_count} - URLs no shard: {len(urls_alvo)}",
+                file=sys.stderr,
+            )
     else:
         parser.error("Informe --url ou --lote")
 

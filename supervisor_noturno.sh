@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/home/pietro/projetos pessoais/coleta_e_organizacao_de_emails/projeto_coleta_emails"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG="$ROOT/supervisor_noturno.log"
 SUP_PID_FILE="$ROOT/.supervisor_noturno.pid"
 CHECK_INTERVAL_SECONDS="${CHECK_INTERVAL_SECONDS:-30}"
@@ -70,6 +70,8 @@ start_supervisor() {
 
 stop_supervisor() {
   if ! is_supervisor_running; then
+    pkill -f "ciclo_horario.sh" >/dev/null 2>&1 || true
+    pkill -f "python .*buscar_urls.py" >/dev/null 2>&1 || true
     rm -f "$SUP_PID_FILE"
     echo "Supervisor já está parado."
     return 0
@@ -82,6 +84,9 @@ stop_supervisor() {
   if kill -0 "$pid" 2>/dev/null; then
     kill -9 "$pid" 2>/dev/null || true
   fi
+
+  pkill -f "ciclo_horario.sh" >/dev/null 2>&1 || true
+  pkill -f "python .*buscar_urls.py" >/dev/null 2>&1 || true
 
   rm -f "$SUP_PID_FILE"
   echo "Supervisor parado."

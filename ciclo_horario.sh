@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/home/pietro/projetos pessoais/coleta_e_organizacao_de_emails/projeto_coleta_emails"
-PY="/home/pietro/.virtualenvs/.venv/bin/python"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${PYTHON_BIN:-}" ]; then
+  PY="$PYTHON_BIN"
+elif [ -x "$ROOT/venv/bin/python" ]; then
+  PY="$ROOT/venv/bin/python"
+else
+  PY="$(command -v python3)"
+fi
 LOG="$ROOT/ciclo_horario.log"
 BUSCA_JANELA_SECONDS="${BUSCA_JANELA_SECONDS:-1800}"
 BUSCA_NUM_RESULTADOS="${BUSCA_NUM_RESULTADOS:-45}"
@@ -12,8 +18,18 @@ BUSCA_LIMITE_TOTAL="${BUSCA_LIMITE_TOTAL:-2500}"
 BUSCA_BACKOFF_BASE="${BUSCA_BACKOFF_BASE:-6.0}"
 BUSCA_PAUSA_MIN="${BUSCA_PAUSA_MIN:-1.5}"
 BUSCA_PAUSA_MAX="${BUSCA_PAUSA_MAX:-3.5}"
+SHARD_COUNT="${SHARD_COUNT:-1}"
+SHARD_INDEX="${SHARD_INDEX:-0}"
+SAIDA_DIR="${SAIDA_DIR:-saida}"
+export SAIDA_DIR
+LISTA_URLS_REL="${LISTA_URLS_REL:-$SAIDA_DIR/lista_urls_faculdade.py}"
+export LISTA_URLS_ARQUIVO="$LISTA_URLS_REL"
+USAR_IA="${USAR_IA:-0}"
+EMAILS_TOTAL_REL="${EMAILS_TOTAL_REL:-a_validar_faculdade.csv}"
+VALIDADOS_FACULDADE_REL="${VALIDADOS_FACULDADE_REL:-$SAIDA_DIR/validados_faculdade.csv}"
+JA_FILTRADOS_REL="${JA_FILTRADOS_REL:-$SAIDA_DIR/ja_filtrados_faculdade.csv}"
 JANELA_AGRUPAR_BRUTOS_SECONDS="${JANELA_AGRUPAR_BRUTOS_SECONDS:-21600}"
-SESSAO_LOG="$ROOT/saida/SESSOES.txt"
+SESSAO_LOG="$ROOT/$SAIDA_DIR/SESSOES.txt"
 CONTADOR_SESSAO="$ROOT/.sessao_contador"
 
 cd "$ROOT"
@@ -24,15 +40,19 @@ JANELA_FIM_EPOCH="$((JANELA_INICIO_EPOCH + JANELA_AGRUPAR_BRUTOS_SECONDS))"
 JANELA_FIM_FMT="$(date -d "@$JANELA_FIM_EPOCH" '+%Y%m%d_%H%M%S')"
 BRUTOS_UNIFICADO_REL="ciclos/${SESSION_MARCA}_ATE_${JANELA_FIM_FMT}_emails_sobra_unificado.csv"
 echo "[$(date '+%F %T')] ciclo_horario iniciado [SESSAO: $SESSION_MARCA]" >> "$LOG"
+echo "[$(date '+%F %T')] shard ativo: index=$SHARD_INDEX count=$SHARD_COUNT" >> "$LOG"
 echo "" >> "$SESSAO_LOG"
 echo "=== SESSAO: $SESSION_MARCA ===" >> "$SESSAO_LOG"
 echo "Início: $(date '+%F %T')" >> "$SESSAO_LOG"
 echo "Arquivo sobra unificado (6h): $BRUTOS_UNIFICADO_REL" >> "$SESSAO_LOG"
+echo "Shard: index=$SHARD_INDEX count=$SHARD_COUNT" >> "$SESSAO_LOG"
+echo "Modo IA: $USAR_IA" >> "$SESSAO_LOG"
+echo "Arquivo a validar: $EMAILS_TOTAL_REL" >> "$SESSAO_LOG"
 
 "$PY" - <<PY
 import csv
 from pathlib import Path
-destino = Path("saida") / "$BRUTOS_UNIFICADO_REL"
+destino = Path("$SAIDA_DIR") / "$BRUTOS_UNIFICADO_REL"
 destino.parent.mkdir(parents=True, exist_ok=True)
 if not destino.exists():
   with destino.open("w", newline="", encoding="utf-8") as f:
@@ -56,14 +76,60 @@ while true; do
 
   ciclo_id="$(date '+%Y%m%d_%H%M%S')"
   ciclo_prefixo="${SESSION_MARCA}_CICLO${CICLO_NUM}"
-  mkdir -p "$ROOT/saida/ciclos"
+  mkdir -p "$ROOT/$SAIDA_DIR/ciclos"
 
   BRUTOS_CICLO_REL="ciclos/${ciclo_prefixo}_emails_brutos_${ciclo_id}.csv"
   VALIDADOS_CICLO_REL="ciclos/${ciclo_prefixo}_emails_validados_${ciclo_id}.csv"
   REJEITADOS_IA_CICLO_REL="ciclos/${ciclo_prefixo}_rejeitados_ia_${ciclo_id}.csv"
 
   echo "[$(date '+%F %T')] etapa 1: coleta sem IA" >> "$LOG"
-  "$PY" coleta_emails.py --lote --saida "$BRUTOS_CICLO_REL" >> "$LOG" 2>&1 || true
+  "$PY" coleta_emails.py --lote --shard-count "$SHARD_COUNT" --shard-index "$SHARD_INDEX" --saida "$BRUTOS_CICLO_REL" >> "$LOG" 2>&1 || true
+
+  bash "$ROOT/sincronizar_filtrados_faculdade.sh" >> "$LOG" 2>&1 || true
+
+  "$PY" - <<PY >> "$LOG" 2>&1 || true
+import csv
+from pathlib import Path
+
+origem = Path("$SAIDA_DIR") / "$BRUTOS_CICLO_REL"
+total = Path("$SAIDA_DIR") / "$EMAILS_TOTAL_REL"
+validados = Path("$VALIDADOS_FACULDADE_REL")
+filtrados = Path("$JA_FILTRADOS_REL")
+
+def ler_emails(caminho: Path):
+    if not caminho.exists():
+        return []
+    with caminho.open("r", newline="", encoding="utf-8") as f:
+        leitor = csv.DictReader(f)
+        if not leitor.fieldnames:
+            return []
+        coluna = "email_validado" if "email_validado" in leitor.fieldnames else leitor.fieldnames[0]
+        return [
+            (linha.get(coluna) or "").strip().lower()
+            for linha in leitor
+            if (linha.get(coluna) or "").strip()
+        ]
+
+vistos = set()
+combinados = []
+ja_validados = set(ler_emails(validados) + ler_emails(filtrados))
+for email in ler_emails(total) + ler_emails(origem):
+  if email in ja_validados:
+    continue
+  if email in vistos:
+    continue
+  vistos.add(email)
+  combinados.append(email)
+
+total.parent.mkdir(parents=True, exist_ok=True)
+with total.open("w", newline="", encoding="utf-8") as f:
+    writer = csv.writer(f)
+    writer.writerow(["email_validado"])
+    for email in combinados:
+        writer.writerow([email])
+
+print(f"EMAILS_TOTAL={len(combinados)}")
+PY
 
   agora_janela="$(date +%s)"
   if [ "$agora_janela" -le "$JANELA_FIM_EPOCH" ]; then
@@ -71,9 +137,9 @@ while true; do
 import csv
 from pathlib import Path
 
-origem = Path("saida") / "$BRUTOS_CICLO_REL"
-destino = Path("saida") / "$BRUTOS_UNIFICADO_REL"
-validados = Path("saida") / "emails_validados.csv"
+origem = Path("$SAIDA_DIR") / "$BRUTOS_CICLO_REL"
+destino = Path("$SAIDA_DIR") / "$BRUTOS_UNIFICADO_REL"
+validados = Path("$SAIDA_DIR") / "emails_validados.csv"
 
 def ler_emails(caminho: Path):
     if not caminho.exists():
@@ -114,15 +180,21 @@ PY
     echo "[$(date '+%F %T')] janela de unificação de brutos encerrada: $BRUTOS_UNIFICADO_REL" >> "$LOG"
   fi
 
-  echo "[$(date '+%F %T')] etapa 2: coleta com IA em cascata" >> "$LOG"
-  "$PY" coleta_emails.py --lote --ia --saida "$VALIDADOS_CICLO_REL" --saida-rejeitados "$REJEITADOS_IA_CICLO_REL" >> "$LOG" 2>&1 || true
+  if [ "$USAR_IA" = "1" ]; then
+    echo "[$(date '+%F %T')] etapa 2: coleta com IA em cascata" >> "$LOG"
+    "$PY" coleta_emails.py --lote --ia --shard-count "$SHARD_COUNT" --shard-index "$SHARD_INDEX" --saida "$VALIDADOS_CICLO_REL" --saida-rejeitados "$REJEITADOS_IA_CICLO_REL" >> "$LOG" 2>&1 || true
 
-  echo "[$(date '+%F %T')] etapa 3: consolidar em Rejeitados (emails brutos)" >> "$LOG"
-  VALIDADOS_NOVO_REL="$VALIDADOS_CICLO_REL" \
-  BRUTOS_NOVO_REL="$BRUTOS_CICLO_REL" \
-  REJEITADOS_IA_REL="$REJEITADOS_IA_CICLO_REL" \
-  PRESERVAR_NOVOS=1 \
-  bash auto_pos_coleta.sh >> "$LOG" 2>&1 || true
+    echo "[$(date '+%F %T')] etapa 3: consolidar em Rejeitados (emails brutos)" >> "$LOG"
+    VALIDADOS_NOVO_REL="$VALIDADOS_CICLO_REL" \
+    BRUTOS_NOVO_REL="$BRUTOS_CICLO_REL" \
+    REJEITADOS_IA_REL="$REJEITADOS_IA_CICLO_REL" \
+    PRESERVAR_NOVOS=1 \
+    SAIDA_DIR="$SAIDA_DIR" \
+    bash auto_pos_coleta.sh >> "$LOG" 2>&1 || true
+  else
+    echo "[$(date '+%F %T')] etapa 2 (IA) desativada por USAR_IA=$USAR_IA" >> "$LOG"
+    echo "[$(date '+%F %T')] etapa 3 (consolidação IA) desativada por USAR_IA=$USAR_IA" >> "$LOG"
+  fi
 
   agora_janela="$(date +%s)"
   if [ "$agora_janela" -le "$JANELA_FIM_EPOCH" ]; then
@@ -130,8 +202,8 @@ PY
 import csv
 from pathlib import Path
 
-destino = Path("saida") / "$BRUTOS_UNIFICADO_REL"
-validados = Path("saida") / "emails_validados.csv"
+destino = Path("$SAIDA_DIR") / "$BRUTOS_UNIFICADO_REL"
+validados = Path("$SAIDA_DIR") / "emails_validados.csv"
 
 def ler_emails(caminho: Path):
     if not caminho.exists():
@@ -181,6 +253,7 @@ PY
 
     "$PY" buscar_urls.py \
       --acumular \
+      --saida "$LISTA_URLS_REL" \
       --num-resultados "$BUSCA_NUM_RESULTADOS" \
       --rodadas "$BUSCA_RODADAS" \
       --max-urls-por-site "$BUSCA_MAX_URLS_POR_SITE" \
