@@ -175,6 +175,58 @@ def buscar_no_google(dork: str, num_resultados: int) -> list[str]:
     return resultados
 
 
+def buscar_no_bing(dork: str, num_resultados: int) -> list[str]:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError as exc:
+        raise RuntimeError("beautifulsoup4 não está instalado.") from exc
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    }
+
+    coletadas: list[str] = []
+    inicio = 1
+
+    while len(coletadas) < num_resultados and inicio <= 101:
+        por_pagina = min(50, num_resultados - len(coletadas))
+        resposta = requests.get(
+            "https://www.bing.com/search",
+            params={"q": dork, "count": por_pagina, "first": inicio},
+            headers=headers,
+            timeout=20,
+        )
+        resposta.raise_for_status()
+
+        soup = BeautifulSoup(resposta.text, "lxml")
+        links = soup.select("li.b_algo h2 a[href]")
+        if not links:
+            break
+
+        adicionados = 0
+        for link in links:
+            href_attr = link.get("href")
+            if isinstance(href_attr, str):
+                href = href_attr.strip()
+            elif isinstance(href_attr, list):
+                href = " ".join(str(item) for item in href_attr if item).strip()
+            else:
+                href = ""
+            if href.startswith("http"):
+                coletadas.append(href)
+                adicionados += 1
+                if len(coletadas) >= num_resultados:
+                    break
+
+        if adicionados == 0:
+            break
+
+        inicio += adicionados
+        time.sleep(random.uniform(0.8, 1.8))
+
+    return coletadas[:num_resultados]
+
+
 def buscar_no_cse(dork: str, num_resultados: int) -> list[str]:
     api_key = os.getenv("GOOGLE_CSE_API_KEY")
     cse_cx = os.getenv("GOOGLE_CSE_CX")
@@ -234,7 +286,7 @@ def salvar_urls_em_arquivo(caminho_saida: str, urls_unicas: set[str], limite_tot
 
 def buscar_com_retry(dork: str, engine: str, num_resultados: int, max_tentativas: int, backoff_base: float) -> list[str]:
     if engine == "auto":
-        provedores = ["duckduckgo", "google"]
+        provedores = ["duckduckgo", "bing", "google"]
         if cse_configurado():
             provedores.insert(0, "cse")
         else:
@@ -247,6 +299,8 @@ def buscar_com_retry(dork: str, engine: str, num_resultados: int, max_tentativas
             try:
                 if provedor == "duckduckgo":
                     resultados = buscar_no_duckduckgo(dork, num_resultados)
+                elif provedor == "bing":
+                    resultados = buscar_no_bing(dork, num_resultados)
                 elif provedor == "google":
                     resultados = buscar_no_google(dork, num_resultados)
                 else:
@@ -279,7 +333,7 @@ def buscar_com_retry(dork: str, engine: str, num_resultados: int, max_tentativas
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Busca URLs acadêmicas com menos bloqueio por rate-limit.")
-    parser.add_argument("--engine", choices=["auto", "cse", "duckduckgo", "google"], default="auto")
+    parser.add_argument("--engine", choices=["auto", "cse", "duckduckgo", "bing", "google"], default="auto")
     parser.add_argument("--num-resultados", type=int, default=35)
     parser.add_argument("--max-tentativas", type=int, default=3)
     parser.add_argument("--backoff-base", type=float, default=8.0)

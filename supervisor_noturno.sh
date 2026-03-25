@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="/home/pietro/projetos pessoais/coleta_e_organizacao_de_emails/projeto_coleta_emails"
 LOG="$ROOT/supervisor_noturno.log"
 SUP_PID_FILE="$ROOT/.supervisor_noturno.pid"
-CHECK_INTERVAL_SECONDS="${CHECK_INTERVAL_SECONDS:-60}"
+CHECK_INTERVAL_SECONDS="${CHECK_INTERVAL_SECONDS:-30}"
 
 cd "$ROOT"
 
@@ -23,7 +23,7 @@ is_supervisor_running() {
 }
 
 is_ciclo_running() {
-  pgrep -af "bash ciclo_horario.sh" >/dev/null 2>&1
+  pgrep -af "ciclo_horario.sh" >/dev/null 2>&1
 }
 
 start_ciclo() {
@@ -107,7 +107,7 @@ usage() {
   echo "  bash supervisor_noturno.sh stop"
   echo "  bash supervisor_noturno.sh restart"
   echo "  bash supervisor_noturno.sh status"
-  echo "  CHECK_INTERVAL_SECONDS=60 bash supervisor_noturno.sh start"
+  echo "  CHECK_INTERVAL_SECONDS=30 bash supervisor_noturno.sh start"
 }
 
 case "${1:-}" in

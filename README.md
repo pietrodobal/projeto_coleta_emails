@@ -79,13 +79,21 @@ bash supervisor_noturno.sh restart
 bash supervisor_noturno.sh stop
 ```
 
-Opcional: ajustar frequência de checagem (padrão 60s):
+Opcional: ajustar frequência de checagem (padrão 30s):
 
 ```bash
 CHECK_INTERVAL_SECONDS=30 bash supervisor_noturno.sh start
 ```
 
 Logs do supervisor ficam em: `supervisor_noturno.log`.
+
+### Scripts ativos do fluxo noturno
+
+- `supervisor_noturno.sh`: monitora e reinicia automaticamente o ciclo.
+- `ciclo_horario.sh`: orquestra coleta sem IA, coleta com IA, consolidação e busca de novas URLs.
+- `auto_pos_coleta.sh`: consolida validados/rejeitados e mantém os arquivos de ciclo.
+
+Para maximizar volume durante a madrugada, o ciclo usa busca de URLs ampliada e maior teto de e-mails por execução.
 
 ---
 

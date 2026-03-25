@@ -10,6 +10,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import unquote
 from urllib.parse import urlsplit, urlunsplit
 from dotenv import load_dotenv
 
@@ -50,6 +51,7 @@ PASTA_SAIDA = "saida"
 ARQUIVO_URLS_PROCESSADAS_SEM_IA = Path(PASTA_SAIDA) / "urls_processadas.txt"
 ARQUIVO_URLS_PROCESSADAS_COM_IA = Path(PASTA_SAIDA) / "urls_processadas_ia.txt"
 MAX_FALHAS_CONSECUTIVAS_IA = int(os.getenv("IA_MAX_FALHAS_CONSECUTIVAS", "5"))
+MAX_EMAILS_POR_EXECUCAO = int(os.getenv("MAX_EMAILS_POR_EXECUCAO", "1200"))
 
 
 def obter_arquivo_urls_processadas(usar_ia: bool) -> Path:
@@ -113,7 +115,29 @@ def coletar_de_url(url: str) -> tuple[dict, bool]:
 
     soup = BeautifulSoup(resposta.text, "lxml")
     texto = soup.get_text(separator=" ")
-    return extrair_emails_com_contexto(texto), True
+    resultados = extrair_emails_com_contexto(texto)
+
+    for link in soup.select("a[href^='mailto:']"):
+        href_attr = link.get("href")
+        if isinstance(href_attr, str):
+            href = href_attr.strip()
+        elif isinstance(href_attr, list):
+            href = " ".join(str(item) for item in href_attr if item).strip()
+        else:
+            href = ""
+        if not href:
+            continue
+
+        bruto = href[len("mailto:"):]
+        if "?" in bruto:
+            bruto = bruto.split("?", 1)[0]
+        email = normalizar_email(unquote(bruto))
+        if not email or not EMAIL_REGEX.fullmatch(email):
+            continue
+        if email not in resultados:
+            resultados[email] = "extraído de link mailto"
+
+    return resultados, True
 
 def configurar_ia():
     ordem_padrao = ["gemini", "groq", "openrouter", "ollama"]
@@ -461,7 +485,7 @@ def main() -> int:
                 if email not in emails_aprovados:
                     emails_aprovados.append(email)
 
-        if len(emails_aprovados) >= 400:
+        if len(emails_aprovados) >= MAX_EMAILS_POR_EXECUCAO:
             break
 
     emails_aprovados.sort()
