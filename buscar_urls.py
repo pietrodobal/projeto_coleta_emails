@@ -30,22 +30,47 @@ except ImportError:
     search = None
 
 dorks = [
+    # Brasil
     'site:edu.br intitle:"corpo docente" "cinema" OR "artes"',
-    'site:edu.ar inurl:contacto "letras" OR "artes"',
-    'site:edu.mx inurl:directorio "humanidades"',
-    'site:edu.co inurl:posgrado "ciencias humanas" OR "artes"',
     'site:edu.br "secretaria de pós-graduação" "sociologia" OR "filosofia"',
-    'site:edu.ar inurl:autoridades "ciencias sociales"',
-    'site:edu.mx "personal académico" "artes visuales"',
     'site:edu.br inurl:departamento "humanidades"',
     'site:edu.br inurl:docentes "artes"',
     'site:edu.br inurl:coordenacao "letras"',
+    'site:edu.br "diretoria" "faculdade de artes"',
+    'site:edu.br inurl:contato "departamento de filosofia"',
+    'site:edu.br inurl:docentes "historia"',
+    'site:edu.br "corpo docente" "antropologia"',
+    'site:edu.br inurl:ppg "sociologia" OR "antropologia"',
+
+    # Argentina
+    'site:edu.ar inurl:contacto "letras" OR "artes"',
+    'site:edu.ar inurl:autoridades "ciencias sociales"',
     'site:edu.ar inurl:departamento "filosofia"',
     'site:edu.ar inurl:docentes "sociologia"',
+    'site:edu.ar "secretaría académica" "humanidades"',
+    'site:edu.ar inurl:contacto "departamento de letras"',
+    'site:edu.ar inurl:cuerpo-docente "artes" OR "cine"',
+    'site:edu.ar inurl:posgrado "historia"',
+
+    # México
+    'site:edu.mx inurl:directorio "humanidades"',
+    'site:edu.mx "personal académico" "artes visuales"',
     'site:edu.mx inurl:facultad "humanidades"',
     'site:edu.mx inurl:docentes "letras"',
+    'site:edu.mx "coordinación" "ciencias sociales"',
+    'site:edu.mx inurl:contacto "facultad de artes"',
+    'site:edu.mx inurl:directorio "filosofia" OR "letras"',
+    'site:edu.mx inurl:plantilla-docente "sociologia"',
+
+    # Colômbia
+    'site:edu.co inurl:posgrado "ciencias humanas" OR "artes"',
     'site:edu.co inurl:facultad "artes"',
     'site:edu.co inurl:docentes "humanidades"',
+    'site:edu.co "directorio" "facultad de humanidades"',
+    'site:edu.co inurl:contacto "ciencias humanas"',
+    'site:edu.co inurl:profesores "filosofia"',
+
+    # Outros LATAM
     'site:edu.pe inurl:escuela "humanidades"',
     'site:edu.pe inurl:docentes "artes"',
     'site:edu.cl inurl:facultad "humanidades"',
@@ -54,14 +79,6 @@ dorks = [
     'site:edu.ec inurl:facultad "artes"',
     'site:edu.py inurl:carrera "humanidades"',
     'site:edu.bo inurl:docentes "filosofia"',
-    'site:edu.br "diretoria" "faculdade de artes"',
-    'site:edu.ar "secretaría académica" "humanidades"',
-    'site:edu.mx "coordinación" "ciencias sociales"',
-    'site:edu.co "directorio" "facultad de humanidades"',
-    'site:edu.br inurl:contato "departamento de filosofia"',
-    'site:edu.ar inurl:contacto "departamento de letras"',
-    'site:edu.mx inurl:contacto "facultad de artes"',
-    'site:edu.co inurl:contacto "ciencias humanas"'
 ]
 
 PARAMETROS_RASTREAMENTO = {
@@ -206,7 +223,7 @@ def eh_erro_limite(mensagem_erro: str) -> bool:
 
 
 def salvar_urls_em_arquivo(caminho_saida: str, urls_unicas: set[str], limite_total: int) -> int:
-    urls_limitadas = list(urls_unicas)[:limite_total]
+    urls_limitadas = sorted(urls_unicas)[:limite_total]
     with open(caminho_saida, "w", encoding="utf-8") as f:
         f.write("urls = [\n")
         for url in urls_limitadas:
@@ -263,14 +280,14 @@ def buscar_com_retry(dork: str, engine: str, num_resultados: int, max_tentativas
 def main() -> int:
     parser = argparse.ArgumentParser(description="Busca URLs acadêmicas com menos bloqueio por rate-limit.")
     parser.add_argument("--engine", choices=["auto", "cse", "duckduckgo", "google"], default="auto")
-    parser.add_argument("--num-resultados", type=int, default=8)
+    parser.add_argument("--num-resultados", type=int, default=35)
     parser.add_argument("--max-tentativas", type=int, default=3)
     parser.add_argument("--backoff-base", type=float, default=8.0)
     parser.add_argument("--pausa-min", type=float, default=2.0)
     parser.add_argument("--pausa-max", type=float, default=5.0)
-    parser.add_argument("--limite-total", type=int, default=200)
-    parser.add_argument("--max-urls-por-site", type=int, default=1)
-    parser.add_argument("--rodadas", type=int, default=1)
+    parser.add_argument("--limite-total", type=int, default=1000)
+    parser.add_argument("--max-urls-por-site", type=int, default=8)
+    parser.add_argument("--rodadas", type=int, default=2)
     parser.add_argument("--acumular", action="store_true")
     parser.add_argument("--apenas-br", action="store_true")
     parser.add_argument("--saida", default="lista_urls.py")

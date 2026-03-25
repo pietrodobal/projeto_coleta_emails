@@ -4,6 +4,7 @@ Projeto Coleta e Organização de Emails (Com Validação IA)
 import argparse
 import csv
 import importlib.util
+import json
 import os
 import re
 import sys
@@ -46,7 +47,13 @@ EMAIL_REGEX = re.compile(
     re.IGNORECASE,
 )
 PASTA_SAIDA = "saida"
-ARQUIVO_URLS_PROCESSADAS = Path(PASTA_SAIDA) / "urls_processadas.txt"
+ARQUIVO_URLS_PROCESSADAS_SEM_IA = Path(PASTA_SAIDA) / "urls_processadas.txt"
+ARQUIVO_URLS_PROCESSADAS_COM_IA = Path(PASTA_SAIDA) / "urls_processadas_ia.txt"
+MAX_FALHAS_CONSECUTIVAS_IA = int(os.getenv("IA_MAX_FALHAS_CONSECUTIVAS", "5"))
+
+
+def obter_arquivo_urls_processadas(usar_ia: bool) -> Path:
+    return ARQUIVO_URLS_PROCESSADAS_COM_IA if usar_ia else ARQUIVO_URLS_PROCESSADAS_SEM_IA
 
 
 def normalizar_url_para_controle(url: str) -> str:
@@ -58,11 +65,11 @@ def normalizar_url_para_controle(url: str) -> str:
         return url.strip().lower().rstrip("/")
 
 
-def carregar_urls_processadas() -> set[str]:
-    if not ARQUIVO_URLS_PROCESSADAS.exists():
+def carregar_urls_processadas(arquivo_urls_processadas: Path) -> set[str]:
+    if not arquivo_urls_processadas.exists():
         return set()
 
-    with ARQUIVO_URLS_PROCESSADAS.open("r", encoding="utf-8") as arquivo:
+    with arquivo_urls_processadas.open("r", encoding="utf-8") as arquivo:
         return {
             normalizar_url_para_controle(linha)
             for linha in arquivo
@@ -70,10 +77,10 @@ def carregar_urls_processadas() -> set[str]:
         }
 
 
-def registrar_url_processada(url: str) -> None:
+def registrar_url_processada(url: str, arquivo_urls_processadas: Path) -> None:
     os.makedirs(PASTA_SAIDA, exist_ok=True)
     url_normalizada = normalizar_url_para_controle(url)
-    with ARQUIVO_URLS_PROCESSADAS.open("a", encoding="utf-8") as arquivo:
+    with arquivo_urls_processadas.open("a", encoding="utf-8") as arquivo:
         arquivo.write(url_normalizada + "\n")
 
 def normalizar_email(email: str) -> str:
@@ -109,25 +116,186 @@ def coletar_de_url(url: str) -> tuple[dict, bool]:
     return extrair_emails_com_contexto(texto), True
 
 def configurar_ia():
-    chave = os.getenv("GEMINI_API_KEY")
-    if not chave:
-        print("GEMINI_API_KEY ausente no arquivo .credenciais/credenciais.", file=sys.stderr)
+    ordem_padrao = ["gemini", "groq", "openrouter", "ollama"]
+    ordem_env = os.getenv("IA_PROVIDER_ORDER", "").strip()
+    ordem = [item.strip().lower() for item in ordem_env.split(",") if item.strip()] if ordem_env else ordem_padrao
+    ordem_sem_ollama = [p for p in ordem if p != "ollama"]
+    if "ollama" in ordem:
+        ordem = ordem_sem_ollama + ["ollama"]
+    else:
+        ordem = ordem_sem_ollama
+
+    clientes = []
+
+    for provedor in ordem:
+        if provedor == "gemini":
+            chave = os.getenv("GEMINI_API_KEY")
+            if not chave:
+                continue
+            if not genai:
+                print("[IA] Gemini ignorado: pacote google-generativeai ausente.", file=sys.stderr)
+                continue
+            configure_fn = getattr(genai, "configure", None)
+            model_cls = getattr(genai, "GenerativeModel", None)
+            if not callable(configure_fn) or model_cls is None:
+                print("[IA] Gemini ignorado: versão incompatível do pacote.", file=sys.stderr)
+                continue
+            try:
+                configure_fn(api_key=chave)
+                clientes.append({
+                    "nome": "gemini",
+                    "tipo": "gemini",
+                    "modelo": model_cls(os.getenv("GEMINI_MODEL", "gemini-2.5-flash")),
+                    "falhas_consecutivas": 0,
+                })
+            except Exception as erro:
+                print(f"[IA] Gemini indisponível: {erro}", file=sys.stderr)
+
+        elif provedor == "groq":
+            chave = os.getenv("GROQ_API_KEY")
+            if not chave:
+                continue
+            clientes.append({
+                "nome": "groq",
+                "tipo": "http_chat",
+                "url": "https://api.groq.com/openai/v1/chat/completions",
+                "key": chave,
+                "modelo": os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+                "falhas_consecutivas": 0,
+                "headers": {
+                    "Authorization": f"Bearer {chave}",
+                    "Content-Type": "application/json",
+                },
+            })
+
+        elif provedor == "openrouter":
+            chave = os.getenv("OPENROUTER_API_KEY")
+            if not chave:
+                continue
+            app_url = os.getenv("OPENROUTER_APP_URL", "http://localhost")
+            app_nome = os.getenv("OPENROUTER_APP_NAME", "coleta-emails")
+            clientes.append({
+                "nome": "openrouter",
+                "tipo": "http_chat",
+                "url": "https://openrouter.ai/api/v1/chat/completions",
+                "key": chave,
+                "modelo": os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"),
+                "falhas_consecutivas": 0,
+                "headers": {
+                    "Authorization": f"Bearer {chave}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": app_url,
+                    "X-Title": app_nome,
+                },
+            })
+
+        elif provedor == "ollama":
+            clientes.append({
+                "nome": "ollama",
+                "tipo": "ollama",
+                "url": os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate"),
+                "modelo": os.getenv("OLLAMA_MODEL", "llama3.1:8b"),
+                "falhas_consecutivas": 0,
+            })
+
+    if not clientes:
+        print(
+            "Nenhum provedor de IA configurado. Configure ao menos uma chave: GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, ou Ollama local.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    if not genai:
-        print("Pacote google-generativeai não instalado no ambiente atual.", file=sys.stderr)
-        sys.exit(1)
+    print(f"[IA] Provedores ativos (ordem): {', '.join(c['nome'] for c in clientes)}", file=sys.stderr)
+    return clientes
 
-    configure_fn = getattr(genai, "configure", None)
-    model_cls = getattr(genai, "GenerativeModel", None)
-    if not callable(configure_fn) or model_cls is None:
-        print("Versão incompatível de google-generativeai no ambiente atual.", file=sys.stderr)
-        sys.exit(1)
 
-    configure_fn(api_key=chave)
-    return model_cls('gemini-2.5-flash')
+def _extrair_resposta_sim_nao(texto: str) -> bool | None:
+    if not texto:
+        return None
+    resposta = texto.strip().upper()
+    if resposta.startswith("S"):
+        return True
+    if resposta.startswith("N"):
+        return False
+    return None
 
-def validar_com_ia(modelo, email: str, contexto: str) -> bool:
+
+def _erro_limite_ou_cota(mensagem: str) -> bool:
+    msg = mensagem.lower()
+    sinais = ["429", "rate", "quota", "limit", "resource_exhausted", "too many requests", "insufficient_quota"]
+    return any(s in msg for s in sinais)
+
+
+def _erro_permanente(mensagem: str) -> bool:
+    msg = mensagem.lower()
+    sinais = ["401", "403", "unauthorized", "forbidden", "invalid api key", "api key inválida", "insufficient_quota"]
+    return any(s in msg for s in sinais)
+
+
+def _validar_com_cliente(cliente: dict, prompt: str) -> tuple[bool | None, str]:
+    try:
+        if cliente["tipo"] == "gemini":
+            resposta = cliente["modelo"].generate_content(prompt)
+            time.sleep(1)
+            texto = getattr(resposta, "text", "")
+            decisao = _extrair_resposta_sim_nao(texto)
+            return decisao, "nenhum"
+
+        if cliente["tipo"] == "http_chat":
+            import requests
+
+            payload = {
+                "model": cliente["modelo"],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                "temperature": 0,
+            }
+            resp = requests.post(cliente["url"], headers=cliente["headers"], data=json.dumps(payload), timeout=45)
+            if resp.status_code in (401, 403):
+                return None, "permanente"
+            if resp.status_code == 429:
+                return None, "temporario"
+            resp.raise_for_status()
+
+            data = resp.json()
+            texto = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            return _extrair_resposta_sim_nao(texto), "nenhum"
+
+        if cliente["tipo"] == "ollama":
+            import requests
+
+            payload = {
+                "model": cliente["modelo"],
+                "prompt": prompt,
+                "stream": False,
+            }
+            resp = requests.post(cliente["url"], json=payload, timeout=60)
+            if resp.status_code >= 500:
+                return None, "temporario"
+            resp.raise_for_status()
+            data = resp.json()
+            texto = data.get("response", "")
+            return _extrair_resposta_sim_nao(texto), "nenhum"
+
+        return None, "temporario"
+    except Exception as erro:
+        mensagem = str(erro)
+        if _erro_permanente(mensagem):
+            return None, "permanente"
+        if _erro_limite_ou_cota(mensagem):
+            return None, "temporario"
+        return None, "temporario"
+
+
+def validar_com_ia(clientes_ia: list[dict], email: str, contexto: str) -> tuple[bool, str]:
     prompt = f"""
     Analise o e-mail: {email}
     Contexto da página: {contexto}
@@ -135,12 +303,80 @@ def validar_com_ia(modelo, email: str, contexto: str) -> bool:
     Artes, Cinema, Letras, Sociologia, Filosofia ou Humanidades?
     Responda APENAS 'S' ou 'N'.
     """
-    try:
-        resposta = modelo.generate_content(prompt)
-        time.sleep(1)
-        return 'S' in resposta.text.upper()
-    except Exception:
-        return False
+
+    indice = 0
+    alguma_decisao_sim = False
+    alguma_decisao_nao = False
+    
+    while indice < len(clientes_ia):
+        cliente = clientes_ia[indice]
+        decisao, tipo_erro = _validar_com_cliente(cliente, prompt)
+
+        if decisao is True:
+            cliente["falhas_consecutivas"] = 0
+            alguma_decisao_sim = True
+            indice += 1
+            continue
+
+        if decisao is False:
+            cliente["falhas_consecutivas"] = 0
+            alguma_decisao_nao = True
+            indice += 1
+            continue
+
+        if tipo_erro == "permanente":
+            print(f"[IA] Provedor '{cliente['nome']}' com erro permanente. Removendo desta execução.", file=sys.stderr)
+            clientes_ia.pop(indice)
+            continue
+
+        cliente["falhas_consecutivas"] = cliente.get("falhas_consecutivas", 0) + 1
+        if cliente["falhas_consecutivas"] >= MAX_FALHAS_CONSECUTIVAS_IA:
+            print(
+                f"[IA] Provedor '{cliente['nome']}' indisponível por {cliente['falhas_consecutivas']} falhas seguidas. Removendo desta execução.",
+                file=sys.stderr,
+            )
+            clientes_ia.pop(indice)
+            continue
+
+        indice += 1
+
+    if alguma_decisao_sim:
+        return True, "aprovado_em_cascata"
+    if alguma_decisao_nao:
+        return False, "reprovado_em_cascata"
+    return False, "sem_decisao_ia"
+
+
+def carregar_emails_csv(caminho_saida: str) -> list[str]:
+    caminho_completo = os.path.join(PASTA_SAIDA, caminho_saida)
+    if not os.path.exists(caminho_completo):
+        return []
+
+    with open(caminho_completo, "r", newline="", encoding="utf-8") as arquivo_csv:
+        leitor = csv.DictReader(arquivo_csv)
+        if not leitor.fieldnames:
+            return []
+        coluna = "email_validado" if "email_validado" in leitor.fieldnames else leitor.fieldnames[0]
+        return [
+            (linha.get(coluna) or "").strip()
+            for linha in leitor
+            if (linha.get(coluna) or "").strip()
+        ]
+
+
+def salvar_csv_unico_acumulado(emails_novos: list[str], caminho_saida: str) -> None:
+    existentes = carregar_emails_csv(caminho_saida)
+    vistos = set()
+    combinados = []
+
+    for email in existentes + emails_novos:
+        chave = email.strip().lower()
+        if not chave or chave in vistos:
+            continue
+        vistos.add(chave)
+        combinados.append(email.strip())
+
+    salvar_csv(combinados, caminho_saida)
 
 def salvar_csv(emails: list[str], caminho_saida: str) -> None:
     os.makedirs(PASTA_SAIDA, exist_ok=True)
@@ -157,6 +393,11 @@ def main() -> int:
     parser.add_argument("--lote", action="store_true", help="Usa a lista gerada em lista_urls.py")
     parser.add_argument("--saida", "-s", default="emails_validados.csv", help="Arquivo CSV de saída.")
     parser.add_argument("--ia", action="store_true", help="Ativa o filtro de IA.")
+    parser.add_argument(
+        "--saida-rejeitados",
+        default="Rejeitados.csv",
+        help="Arquivo de rejeitados da etapa IA (acumulado sem duplicatas).",
+    )
     args = parser.parse_args()
 
     urls_alvo = []
@@ -167,7 +408,8 @@ def main() -> int:
     else:
         parser.error("Informe --url ou --lote")
 
-    urls_processadas = carregar_urls_processadas()
+    arquivo_urls_processadas = obter_arquivo_urls_processadas(args.ia)
+    urls_processadas = carregar_urls_processadas(arquivo_urls_processadas)
 
     if args.lote:
         urls_alvo = [
@@ -176,7 +418,14 @@ def main() -> int:
         ]
 
     emails_aprovados = []
-    modelo_ia = configurar_ia() if args.ia else None
+    emails_rejeitados_ia = []
+    clientes_ia = configurar_ia() if args.ia else []
+
+    if args.ia and not clientes_ia:
+        print("[IA] Sem provedores ativos. Encerrando etapa IA e mantendo brutos para revisão manual.", file=sys.stderr)
+        return 0
+
+    ia_indisponivel = False
 
     for url in urls_alvo:
         emails_brutos, sucesso_coleta = coletar_de_url(url)
@@ -184,7 +433,7 @@ def main() -> int:
         if sucesso_coleta:
             url_normalizada = normalizar_url_para_controle(url)
             if url_normalizada not in urls_processadas:
-                registrar_url_processada(url)
+                registrar_url_processada(url, arquivo_urls_processadas)
                 urls_processadas.add(url_normalizada)
 
         if not emails_brutos:
@@ -192,8 +441,21 @@ def main() -> int:
         
         if args.ia:
             for email, contexto in emails_brutos.items():
-                if email not in emails_aprovados and validar_com_ia(modelo_ia, email, contexto):
+                if not clientes_ia:
+                    ia_indisponivel = True
+                    break
+                if email in emails_aprovados:
+                    continue
+                aprovado, motivo = validar_com_ia(clientes_ia, email, contexto)
+                if aprovado:
                     emails_aprovados.append(email)
+                else:
+                    if motivo != "sem_decisao_ia" and email not in emails_rejeitados_ia:
+                        emails_rejeitados_ia.append(email)
+
+            if ia_indisponivel:
+                print("[IA] Provedores indisponíveis durante a execução. Encerrando etapa IA e mantendo brutos para revisão manual.", file=sys.stderr)
+                break
         else:
             for email in emails_brutos.keys():
                 if email not in emails_aprovados:
@@ -205,6 +467,10 @@ def main() -> int:
     emails_aprovados.sort()
     if emails_aprovados:
         salvar_csv(emails_aprovados, args.saida)
+
+    if args.ia and emails_rejeitados_ia:
+        emails_rejeitados_ia.sort()
+        salvar_csv_unico_acumulado(emails_rejeitados_ia, args.saida_rejeitados)
 
     return 0
 

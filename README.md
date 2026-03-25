@@ -59,6 +59,36 @@ Os contatos validados serão gerados no diretório de saída: `saida/emails_vali
 
 ---
 
+## 🌙 Execução contínua durante a noite (autorestart)
+
+Para manter o pipeline rodando enquanto você dorme, use o supervisor:
+
+```bash
+cd "/home/pietro/projetos pessoais/coleta_e_organizacao_de_emails/projeto_coleta_emails"
+
+# iniciar monitoramento (reinicia ciclo_horario.sh se cair)
+bash supervisor_noturno.sh start
+
+# ver status do supervisor + ciclo
+bash supervisor_noturno.sh status
+
+# reiniciar supervisor
+bash supervisor_noturno.sh restart
+
+# parar supervisor
+bash supervisor_noturno.sh stop
+```
+
+Opcional: ajustar frequência de checagem (padrão 60s):
+
+```bash
+CHECK_INTERVAL_SECONDS=30 bash supervisor_noturno.sh start
+```
+
+Logs do supervisor ficam em: `supervisor_noturno.log`.
+
+---
+
 ## 🗂️ Estrutura do Projeto
 
 ```text
