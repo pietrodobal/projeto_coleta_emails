@@ -1,0 +1,12 @@
+Uso:
+  bash supervisor_noturno.sh start
+  bash supervisor_noturno.sh stop
+  bash supervisor_noturno.sh restart
+  bash supervisor_noturno.sh status
+  CHECK_INTERVAL_SECONDS=30 bash supervisor_noturno.sh start
+Uso:
+  bash supervisor_noturno.sh start
+  bash supervisor_noturno.sh stop
+  bash supervisor_noturno.sh restart
+  bash supervisor_noturno.sh status
+  CHECK_INTERVAL_SECONDS=30 bash supervisor_noturno.sh start
