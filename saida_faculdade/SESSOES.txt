@@ -1,0 +1,40 @@
+
+=== SESSAO: 20260325_113518 ===
+Início: 2026-03-25 11:35:18
+Arquivo sobra unificado (6h): ciclos/20260325_113518_ATE_20260325_173518_emails_sobra_unificado.csv
+Shard: index=1 count=2
+  Ciclo #1: 2026-03-25 12:05:27 - 20260325_113518_CICLO1
+  Ciclo #2: 2026-03-25 12:37:10 - 20260325_113518_CICLO2
+Fim: 2026-03-25 12:46:41
+
+=== SESSAO: 20260325_124710 ===
+Início: 2026-03-25 12:47:10
+Arquivo sobra unificado (6h): ciclos/20260325_124710_ATE_20260325_184710_emails_sobra_unificado.csv
+Shard: index=1 count=2
+Modo IA: 0
+Arquivo total de emails: emails_encontrados_total.csv
+Fim: 2026-03-25 13:14:39
+
+=== SESSAO: 20260325_131506 ===
+Início: 2026-03-25 13:15:06
+Arquivo sobra unificado (6h): ciclos/20260325_131506_ATE_20260325_191506_emails_sobra_unificado.csv
+Shard: index=1 count=2
+Modo IA: 0
+Arquivo total de emails: emails_encontrados_total.csv
+Fim: 2026-03-25 13:16:34
+
+=== SESSAO: 20260325_131701 ===
+Início: 2026-03-25 13:17:01
+Arquivo sobra unificado (6h): ciclos/20260325_131701_ATE_20260325_191701_emails_sobra_unificado.csv
+Shard: index=1 count=2
+Modo IA: 0
+Arquivo a validar: a_validar_faculdade.csv
+Fim: 2026-03-25 13:22:42
+
+=== SESSAO: 20260325_132309 ===
+Início: 2026-03-25 13:23:09
+Arquivo sobra unificado (6h): ciclos/20260325_132309_ATE_20260325_192309_emails_sobra_unificado.csv
+Shard: index=0 count=1
+Modo IA: 0
+Arquivo a validar: a_validar_faculdade.csv
+  Ciclo #1: 2026-03-25 13:53:53 - 20260325_132309_CICLO1

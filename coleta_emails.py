@@ -51,7 +51,12 @@ PASTA_SAIDA = "saida"
 ARQUIVO_URLS_PROCESSADAS_SEM_IA = Path(PASTA_SAIDA) / "urls_processadas.txt"
 ARQUIVO_URLS_PROCESSADAS_COM_IA = Path(PASTA_SAIDA) / "urls_processadas_ia.txt"
 MAX_FALHAS_CONSECUTIVAS_IA = int(os.getenv("IA_MAX_FALHAS_CONSECUTIVAS", "5"))
-MAX_EMAILS_POR_EXECUCAO = int(os.getenv("MAX_EMAILS_POR_EXECUCAO", "1200"))
+MAX_EMAILS_POR_EXECUCAO = int(os.getenv("MAX_EMAILS_POR_EXECUCAO", "2500"))
+COLETA_TIMEOUT_SECONDS = int(os.getenv("COLETA_TIMEOUT_SECONDS", "10"))
+IA_HTTP_TIMEOUT_SECONDS = int(os.getenv("IA_HTTP_TIMEOUT_SECONDS", "12"))
+IA_OLLAMA_TIMEOUT_SECONDS = int(os.getenv("IA_OLLAMA_TIMEOUT_SECONDS", str(IA_HTTP_TIMEOUT_SECONDS)))
+IA_GEMINI_TIMEOUT_SECONDS = int(os.getenv("IA_GEMINI_TIMEOUT_SECONDS", str(IA_HTTP_TIMEOUT_SECONDS)))
+IA_MIN_DECISOES_SIM = int(os.getenv("IA_MIN_DECISOES_SIM", "2"))
 
 
 def obter_arquivo_urls_processadas(usar_ia: bool) -> Path:
@@ -108,7 +113,7 @@ def coletar_de_url(url: str) -> tuple[dict, bool]:
 
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64)'}
-        resposta = requests.get(url, headers=headers, timeout=15)
+        resposta = requests.get(url, headers=headers, timeout=COLETA_TIMEOUT_SECONDS)
         resposta.raise_for_status()
     except requests.RequestException:
         return {}, False
@@ -140,14 +145,9 @@ def coletar_de_url(url: str) -> tuple[dict, bool]:
     return resultados, True
 
 def configurar_ia():
-    ordem_padrao = ["gemini", "groq", "openrouter", "ollama"]
+    ordem_padrao = ["groq", "gemini", "openrouter", "ollama"]
     ordem_env = os.getenv("IA_PROVIDER_ORDER", "").strip()
     ordem = [item.strip().lower() for item in ordem_env.split(",") if item.strip()] if ordem_env else ordem_padrao
-    ordem_sem_ollama = [p for p in ordem if p != "ollama"]
-    if "ollama" in ordem:
-        ordem = ordem_sem_ollama + ["ollama"]
-    else:
-        ordem = ordem_sem_ollama
 
     clientes = []
 
@@ -176,7 +176,7 @@ def configurar_ia():
                 print(f"[IA] Gemini indisponível: {erro}", file=sys.stderr)
 
         elif provedor == "groq":
-            chave = os.getenv("GROQ_API_KEY")
+            chave = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_CLOUD_API_KEY")
             if not chave:
                 continue
             clientes.append({
@@ -193,7 +193,7 @@ def configurar_ia():
             })
 
         elif provedor == "openrouter":
-            chave = os.getenv("OPENROUTER_API_KEY")
+            chave = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY")
             if not chave:
                 continue
             app_url = os.getenv("OPENROUTER_APP_URL", "http://localhost")
@@ -252,14 +252,28 @@ def _erro_limite_ou_cota(mensagem: str) -> bool:
 
 def _erro_permanente(mensagem: str) -> bool:
     msg = mensagem.lower()
-    sinais = ["401", "403", "unauthorized", "forbidden", "invalid api key", "api key inválida", "insufficient_quota"]
+    sinais = [
+        "401",
+        "403",
+        "404",
+        "unauthorized",
+        "forbidden",
+        "not found",
+        "model not found",
+        "invalid api key",
+        "api key inválida",
+        "insufficient_quota",
+    ]
     return any(s in msg for s in sinais)
 
 
 def _validar_com_cliente(cliente: dict, prompt: str) -> tuple[bool | None, str]:
     try:
         if cliente["tipo"] == "gemini":
-            resposta = cliente["modelo"].generate_content(prompt)
+            resposta = cliente["modelo"].generate_content(
+                prompt,
+                request_options={"timeout": IA_GEMINI_TIMEOUT_SECONDS},
+            )
             time.sleep(1)
             texto = getattr(resposta, "text", "")
             decisao = _extrair_resposta_sim_nao(texto)
@@ -278,8 +292,15 @@ def _validar_com_cliente(cliente: dict, prompt: str) -> tuple[bool | None, str]:
                 ],
                 "temperature": 0,
             }
-            resp = requests.post(cliente["url"], headers=cliente["headers"], data=json.dumps(payload), timeout=45)
+            resp = requests.post(
+                cliente["url"],
+                headers=cliente["headers"],
+                data=json.dumps(payload),
+                timeout=IA_HTTP_TIMEOUT_SECONDS,
+            )
             if resp.status_code in (401, 403):
+                return None, "permanente"
+            if resp.status_code == 404:
                 return None, "permanente"
             if resp.status_code == 429:
                 return None, "temporario"
@@ -301,7 +322,9 @@ def _validar_com_cliente(cliente: dict, prompt: str) -> tuple[bool | None, str]:
                 "prompt": prompt,
                 "stream": False,
             }
-            resp = requests.post(cliente["url"], json=payload, timeout=60)
+            resp = requests.post(cliente["url"], json=payload, timeout=IA_OLLAMA_TIMEOUT_SECONDS)
+            if resp.status_code == 404:
+                return None, "permanente"
             if resp.status_code >= 500:
                 return None, "temporario"
             resp.raise_for_status()
@@ -321,30 +344,46 @@ def _validar_com_cliente(cliente: dict, prompt: str) -> tuple[bool | None, str]:
 
 def validar_com_ia(clientes_ia: list[dict], email: str, contexto: str) -> tuple[bool, str]:
     prompt = f"""
-    Analise o e-mail: {email}
-    Contexto da página: {contexto}
-    Este e-mail pertence a uma secretaria, departamento, diretoria ou docente das áreas de 
-    Artes, Cinema, Letras, Sociologia, Filosofia ou Humanidades?
-    Responda APENAS 'S' ou 'N'.
+    Objetivo da campanha: contatos acadêmicos institucionais de alta relevância para Artes, Cinema, Letras,
+    Sociologia, Filosofia e Humanidades em universidades/faculdades.
+
+    Email: {email}
+    Contexto extraído da página: {contexto}
+
+    Critérios para responder S (SIM):
+    - Contato institucional útil para relacionamento acadêmico (secretaria, coordenação, pós-graduação, departamento,
+      núcleo acadêmico, escolar, extensão acadêmica ou equivalente).
+    - Forte relação com as áreas-alvo no contexto.
+
+    Critérios para responder N (NÃO):
+    - Email pessoal de docente/aluno/colaborador sem função institucional clara de contato.
+    - Caixa genérica sem vínculo acadêmico estratégico ao objetivo da campanha.
+    - Contexto fraco, ambíguo ou fora das áreas-alvo.
+    - Em caso de dúvida, risco estratégico ou baixa confiança, responda N.
+
+    Responda APENAS com S ou N.
     """
 
     indice = 0
-    alguma_decisao_sim = False
-    alguma_decisao_nao = False
-    
+    decisoes_sim = 0
+    decisoes_nao = 0
+    sim_por_ollama = False
+
     while indice < len(clientes_ia):
         cliente = clientes_ia[indice]
         decisao, tipo_erro = _validar_com_cliente(cliente, prompt)
 
         if decisao is True:
             cliente["falhas_consecutivas"] = 0
-            alguma_decisao_sim = True
+            decisoes_sim += 1
+            if cliente.get("nome") == "ollama":
+                sim_por_ollama = True
             indice += 1
             continue
 
         if decisao is False:
             cliente["falhas_consecutivas"] = 0
-            alguma_decisao_nao = True
+            decisoes_nao += 1
             indice += 1
             continue
 
@@ -364,9 +403,11 @@ def validar_com_ia(clientes_ia: list[dict], email: str, contexto: str) -> tuple[
 
         indice += 1
 
-    if alguma_decisao_sim:
+    if decisoes_sim >= IA_MIN_DECISOES_SIM:
+        if sim_por_ollama:
+            return True, "aprovado_com_ollama"
         return True, "aprovado_em_cascata"
-    if alguma_decisao_nao:
+    if decisoes_nao > 0:
         return False, "reprovado_em_cascata"
     return False, "sem_decisao_ia"
 
@@ -418,9 +459,25 @@ def main() -> int:
     parser.add_argument("--saida", "-s", default="emails_validados.csv", help="Arquivo CSV de saída.")
     parser.add_argument("--ia", action="store_true", help="Ativa o filtro de IA.")
     parser.add_argument(
+        "--ignorar-processadas",
+        action="store_true",
+        help="Revisita URLs mesmo que já estejam marcadas como processadas.",
+    )
+    parser.add_argument(
+        "--max-urls",
+        type=int,
+        default=0,
+        help="Limita o número de URLs desta execução (0 = sem limite).",
+    )
+    parser.add_argument(
         "--saida-rejeitados",
         default="Rejeitados.csv",
         help="Arquivo de rejeitados da etapa IA (acumulado sem duplicatas).",
+    )
+    parser.add_argument(
+        "--saida-dupla-verificacao",
+        default="dupla_verificacao.csv",
+        help="Arquivo para revisão manual de aprovações envolvendo Ollama.",
     )
     args = parser.parse_args()
 
@@ -435,14 +492,18 @@ def main() -> int:
     arquivo_urls_processadas = obter_arquivo_urls_processadas(args.ia)
     urls_processadas = carregar_urls_processadas(arquivo_urls_processadas)
 
-    if args.lote:
+    if args.lote and not args.ignorar_processadas:
         urls_alvo = [
             url for url in urls_alvo
             if normalizar_url_para_controle(url) not in urls_processadas
         ]
 
+    if args.max_urls > 0:
+        urls_alvo = urls_alvo[: args.max_urls]
+
     emails_aprovados = []
     emails_rejeitados_ia = []
+    emails_dupla_verificacao = []
     clientes_ia = configurar_ia() if args.ia else []
 
     if args.ia and not clientes_ia:
@@ -454,7 +515,7 @@ def main() -> int:
     for url in urls_alvo:
         emails_brutos, sucesso_coleta = coletar_de_url(url)
 
-        if sucesso_coleta:
+        if sucesso_coleta and not args.ignorar_processadas:
             url_normalizada = normalizar_url_para_controle(url)
             if url_normalizada not in urls_processadas:
                 registrar_url_processada(url, arquivo_urls_processadas)
@@ -472,7 +533,11 @@ def main() -> int:
                     continue
                 aprovado, motivo = validar_com_ia(clientes_ia, email, contexto)
                 if aprovado:
-                    emails_aprovados.append(email)
+                    if motivo == "aprovado_com_ollama":
+                        if email not in emails_dupla_verificacao:
+                            emails_dupla_verificacao.append(email)
+                    else:
+                        emails_aprovados.append(email)
                 else:
                     if motivo != "sem_decisao_ia" and email not in emails_rejeitados_ia:
                         emails_rejeitados_ia.append(email)
@@ -495,6 +560,10 @@ def main() -> int:
     if args.ia and emails_rejeitados_ia:
         emails_rejeitados_ia.sort()
         salvar_csv_unico_acumulado(emails_rejeitados_ia, args.saida_rejeitados)
+
+    if args.ia and emails_dupla_verificacao:
+        emails_dupla_verificacao.sort()
+        salvar_csv_unico_acumulado(emails_dupla_verificacao, args.saida_dupla_verificacao)
 
     return 0
 

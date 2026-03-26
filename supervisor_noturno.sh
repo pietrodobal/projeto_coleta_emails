@@ -23,7 +23,21 @@ is_supervisor_running() {
 }
 
 is_ciclo_running() {
-  pgrep -af "ciclo_horario.sh" >/dev/null 2>&1
+  local pids
+  pids="$(pgrep -f "bash .*ciclo_horario.sh" 2>/dev/null || true)"
+  [[ -z "$pids" ]] && return 1
+
+  local pid state
+  for pid in $pids; do
+    if [[ -r "/proc/$pid/stat" ]]; then
+      state="$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)"
+      if [[ "$state" != "Z" ]]; then
+        return 0
+      fi
+    fi
+  done
+
+  return 1
 }
 
 start_ciclo() {
